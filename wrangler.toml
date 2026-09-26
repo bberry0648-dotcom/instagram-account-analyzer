@@ -1,0 +1,9 @@
+# Cloudflare Worker for the API. Secrets are set with `npx wrangler secret put <NAME>`, never here.
+name = "instagram-account-analyzer-api"
+main = "server/worker.ts"
+compatibility_date = "2026-09-01"
+
+[vars]
+ALLOWED_ORIGINS = "https://bberry0648-dotcom.github.io,http://localhost:5173"
+META_GRAPH_VERSION = "v25.0"
+META_MAX_PAGES = "12"
