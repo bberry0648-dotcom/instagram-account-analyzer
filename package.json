@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "lint": "oxlint",
-    "deploy:api": "wrangler deploy"
+    "deploy:api": "wrangler deploy",
+    "meta:setup": "tsx server/meta-setup.ts"
   },
   "dependencies": {
     "react": "^19.2.8",
