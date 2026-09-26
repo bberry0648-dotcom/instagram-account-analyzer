@@ -22,9 +22,13 @@ export async function fetchAccountFromApi(
   url.searchParams.set('provider', provider)
   if (since) url.searchParams.set('since', startOfDayIso(since))
 
+  const headers: Record<string, string> = {}
+  const code = getAccessCode()
+  if (code) headers['X-Access-Code'] = code
+
   let res: Response
   try {
-    res = await fetch(url, { signal })
+    res = await fetch(url, { signal, headers })
   } catch (err) {
     if ((err as Error).name === 'AbortError') throw err
     throw new AnalyzerError('NETWORK')
@@ -47,16 +51,52 @@ function startOfDayIso(d: Date): string {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())).toISOString()
 }
 
+const ACCESS_KEY = 'iaa:access-code'
+
+/** Shared access code for the API. sessionStorage only (cleared when the tab closes), never localStorage. */
+export function getAccessCode(): string | null {
+  try {
+    return sessionStorage.getItem(ACCESS_KEY)
+  } catch {
+    return null
+  }
+}
+export function setAccessCode(code: string): void {
+  try {
+    sessionStorage.setItem(ACCESS_KEY, code)
+  } catch {
+    /* private mode — the code just won't persist */
+  }
+}
+
 export type ApiStatus = 'not-configured' | 'unreachable' | 'no-credentials' | 'ready'
 
-/** Asks the API whether the Meta provider actually has credentials (without revealing them). */
-export async function checkApiStatus(signal?: AbortSignal): Promise<ApiStatus> {
-  if (!isApiConfigured()) return 'not-configured'
-  try {
-    const res = await fetch(`${API_BASE_URL}/api/health`, { signal })
-    const body = (await res.json()) as { providers?: Record<string, boolean> }
-    return body.providers?.meta ? 'ready' : 'no-credentials'
-  } catch {
-    return 'unreachable'
-  }
+export interface ApiHealth {
+  status: ApiStatus
+  /** Which provider the search box should use. */
+  source: 'meta' | 'external' | null
+  accessCodeRequired: boolean
+}
+
+let healthPromise: Promise<ApiHealth> | null = null
+
+/** Asks the API which providers have credentials (booleans only, never the secrets). Cached per page load. */
+export function getApiHealth(): Promise<ApiHealth> {
+  if (!isApiConfigured()) return Promise.resolve({ status: 'not-configured', source: null, accessCodeRequired: false })
+  healthPromise ??= fetch(`${API_BASE_URL}/api/health`)
+    .then((r) => r.json() as Promise<{ providers?: Record<string, boolean>; accessCodeRequired?: boolean }>)
+    .then((b): ApiHealth => {
+      const source = b.providers?.meta ? 'meta' : b.providers?.external ? 'external' : null
+      return { status: source ? 'ready' : 'no-credentials', source, accessCodeRequired: Boolean(b.accessCodeRequired) }
+    })
+    .catch((): ApiHealth => {
+      healthPromise = null
+      return { status: 'unreachable', source: null, accessCodeRequired: false }
+    })
+  return healthPromise
+}
+
+/** Provider for a new search: Meta when connected, otherwise the external provider. */
+export async function preferredSource(): Promise<'meta' | 'external'> {
+  return (await getApiHealth()).source ?? 'meta'
 }

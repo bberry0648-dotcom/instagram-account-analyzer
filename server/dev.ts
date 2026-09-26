@@ -18,8 +18,7 @@ function loadDotEnv(path: string): Record<string, string> {
 
 const env: Env = { ...loadDotEnv('.env'), ...process.env } as Env
 const port = Number(process.env.API_PORT ?? 8787)
-const memory = new Map<string, { at: number; body: string; status: number; headers: [string, string][] }>()
-const TTL = 15 * 60 * 1000
+const memory = new Map<string, { expiresAt: number; body: string; status: number; headers: [string, string][] }>()
 
 createServer(async (req, res) => {
   const request = new Request(`http://localhost:${port}${req.url}`, {
@@ -29,16 +28,17 @@ createServer(async (req, res) => {
   const response = await handleRequest(request, env, {
     get: async (k) => {
       const hit = memory.get(k)
-      if (!hit || Date.now() - hit.at > TTL) return undefined
+      if (!hit || Date.now() > hit.expiresAt) return undefined
       return new Response(hit.body, { status: hit.status, headers: hit.headers })
     },
-    put: async (k, r) => {
-      memory.set(k, { at: Date.now(), body: await r.text(), status: r.status, headers: [...r.headers] })
+    put: async (k, r, ttl) => {
+      memory.set(k, { expiresAt: Date.now() + ttl * 1000, body: await r.text(), status: r.status, headers: [...r.headers] })
     },
   })
   res.writeHead(response.status, Object.fromEntries(response.headers))
   res.end(Buffer.from(await response.arrayBuffer()))
 }).listen(port, () => {
-  const configured = Boolean(env.META_ACCESS_TOKEN && env.META_IG_USER_ID)
-  console.log(`API on http://localhost:${port}  (Meta provider ${configured ? 'configured' : 'NOT configured'})`)
+  const meta = Boolean(env.META_ACCESS_TOKEN && env.META_IG_USER_ID)
+  const ext = Boolean(env.EXTERNAL_PROVIDER_KEY && env.EXTERNAL_PROVIDER_NAME)
+  console.log(`API on http://localhost:${port}  (meta: ${meta ? 'on' : 'off'}, external: ${ext ? env.EXTERNAL_PROVIDER_NAME : 'off'})`)
 })

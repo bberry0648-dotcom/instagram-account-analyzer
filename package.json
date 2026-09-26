@@ -11,7 +11,8 @@
     "test": "vitest run",
     "lint": "oxlint",
     "deploy:api": "wrangler deploy",
-    "meta:setup": "tsx server/meta-setup.ts"
+    "meta:setup": "tsx server/meta-setup.ts",
+    "secrets:push": "tsx server/push-secrets.ts"
   },
   "dependencies": {
     "react": "^19.2.8",

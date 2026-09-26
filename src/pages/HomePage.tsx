@@ -5,14 +5,15 @@ import { parseInstagramInput } from '../features/instagram/parseUsername'
 import { fmtDate } from '../lib/format'
 import { accountPath, navigate } from '../lib/router'
 import { clearRecent, getRecent, removeRecent, type RecentEntry } from '../lib/storage'
-import { checkApiStatus, type ApiStatus } from '../services/apiClient'
+import { getApiHealth, preferredSource, type ApiHealth } from '../services/apiClient'
 
-const API_STATUS_TEXT: Record<ApiStatus | 'checking', string> = {
-  checking: '데이터 서버 확인 중…',
-  ready: 'Meta Instagram API 연결됨 · 공개 Business/Creator 계정 분석 가능',
-  'no-credentials': 'API 서버에 Meta 토큰이 아직 설정되지 않음 · 가져오기로 분석 가능',
-  unreachable: 'API 서버에 연결할 수 없음 · 가져오기로 분석 가능',
-  'not-configured': 'API 서버 미연결 · 가져오기로만 분석 가능',
+function statusText(h: ApiHealth | null): string {
+  if (!h) return '데이터 서버 확인 중…'
+  if (h.source === 'meta') return 'Meta Instagram API 연결됨 · 공개 Business/Creator 계정 분석 가능'
+  if (h.source === 'external') return `외부 데이터 서비스 연결됨 · 공개 계정 분석 가능${h.accessCodeRequired ? ' (접근 코드 필요)' : ''}`
+  if (h.status === 'no-credentials') return 'API 서버에 데이터 공급자가 아직 설정되지 않음 · 가져오기로 분석 가능'
+  if (h.status === 'unreachable') return 'API 서버에 연결할 수 없음 · 가져오기로 분석 가능'
+  return 'API 서버 미연결 · 가져오기로만 분석 가능'
 }
 
 const SOURCE_LABEL = { meta: 'Meta API', external: 'External', imported: 'Imported' } as const
@@ -22,12 +23,14 @@ export function HomePage() {
   const [error, setError] = useState<string | null>(null)
   const [recent, setRecent] = useState<RecentEntry[]>(getRecent)
   const [importOpen, setImportOpen] = useState(false)
-  const [api, setApi] = useState<ApiStatus | 'checking'>('checking')
+  const [health, setHealth] = useState<ApiHealth | null>(null)
 
   useEffect(() => {
-    const ctrl = new AbortController()
-    checkApiStatus(ctrl.signal).then((s) => !ctrl.signal.aborted && setApi(s))
-    return () => ctrl.abort()
+    let alive = true
+    getApiHealth().then((h) => alive && setHealth(h))
+    return () => {
+      alive = false
+    }
   }, [])
 
   function submit(e: React.FormEvent) {
@@ -38,7 +41,7 @@ export function HomePage() {
       return
     }
     setError(null)
-    navigate(accountPath('meta', r.username))
+    preferredSource().then((src) => navigate(accountPath(src, r.username)))
   }
 
   return (
@@ -90,8 +93,8 @@ export function HomePage() {
 
       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-3">
         <span className="flex items-center gap-1.5">
-          <span className={cx('size-1.5 rounded-full', api === 'ready' ? 'bg-good' : api === 'checking' ? 'bg-line-strong' : 'bg-warn')} />
-          {API_STATUS_TEXT[api]}
+          <span className={cx('size-1.5 rounded-full', health?.status === 'ready' ? 'bg-good' : !health ? 'bg-line-strong' : 'bg-warn')} />
+          {statusText(health)}
         </span>
         <button type="button" onClick={() => setImportOpen(true)} className="inline-flex items-center gap-1 font-medium text-accent-text hover:underline">
           <Icon name="upload" className="size-3.5" />
@@ -140,8 +143,8 @@ export function HomePage() {
       )}
 
       <p className="mt-auto pt-16 text-xs leading-relaxed text-ink-3">
-        Meta 공식 API(Business Discovery)로 공개 Business·Creator 계정의 게시물 지표만 조회합니다. 개인·비공개 계정은 API로 분석할 수 없으며, 데이터가
-        없을 때 결과를 추정해 채우지 않습니다.
+        공개 계정의 게시물 지표만 조회합니다(Meta 공식 API 또는 외부 데이터 서비스). 비공개 계정은 분석할 수 없으며, 데이터가 없을 때 결과를 추정해 채우지
+        않습니다.
       </p>
 
       {importOpen && <ImportDialog onClose={() => setImportOpen(false)} />}

@@ -40,7 +40,8 @@ export class MetaInstagramProvider implements ServerProvider {
   private readonly env: MetaEnv
   private readonly fetchImpl: typeof fetch
 
-  constructor(env: MetaEnv, fetchImpl: typeof fetch = fetch) {
+  // Wrapped: calling an unbound global fetch as a method throws "Illegal invocation" in Workers.
+  constructor(env: MetaEnv, fetchImpl: typeof fetch = (...a) => fetch(...a)) {
     this.env = env
     this.fetchImpl = fetchImpl
   }

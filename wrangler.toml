@@ -1,9 +1,19 @@
-# Cloudflare Worker for the API. Secrets are set with `npx wrangler secret put <NAME>`, never here.
+# Cloudflare Worker for the API. Secrets are set with `npx wrangler secret put <NAME>`, never here:
+#   EXTERNAL_PROVIDER_KEY, ACCESS_CODE, (optional) META_ACCESS_TOKEN, META_IG_USER_ID
 name = "instagram-account-analyzer-api"
 main = "server/worker.ts"
 compatibility_date = "2026-09-01"
 
 [vars]
 ALLOWED_ORIGINS = "https://bberry0648-dotcom.github.io,http://localhost:5173"
+EXTERNAL_PROVIDER_NAME = "apify"
+EXTERNAL_MAX_POSTS = "150"
+EXTERNAL_CACHE_HOURS = "12"
 META_GRAPH_VERSION = "v25.0"
 META_MAX_PAGES = "12"
+
+# Result cache. The Cache API does nothing on *.workers.dev, so a KV namespace is used.
+# Create with `npx wrangler kv namespace create CACHE` and paste the id below.
+# [[kv_namespaces]]
+# binding = "CACHE"
+# id = ""

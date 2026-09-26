@@ -13,6 +13,8 @@ import { ImportDialog } from '../features/import/ImportDialog'
 import { parseInstagramInput } from '../features/instagram/parseUsername'
 import { describeError } from '../lib/errors'
 import { accountPath, navigate } from '../lib/router'
+import { preferredSource, setAccessCode } from '../services/apiClient'
+import { AnalyzerError } from '../lib/errors'
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -58,6 +60,7 @@ export function DashboardPage({ source, username, tab, period }: { source: DataS
         {result.status === 'error' && (
           <ErrorState
             error={result.error}
+            source={source}
             username={username}
             onRetry={() => setReload((n) => n + 1)}
             onImport={() => setImportOpen(true)}
@@ -153,7 +156,7 @@ function TopBar() {
             if (!r.ok) return setErr(true)
             setErr(false)
             setQ('')
-            navigate(accountPath('meta', r.username))
+            preferredSource().then((src) => navigate(accountPath(src, r.username)))
           }}
         >
           <label className="sr-only" htmlFor="topbar-search">
@@ -185,7 +188,12 @@ function LoadingState({ username, source }: { username: string; source: DataSour
   return (
     <div className="animate-pulse" aria-busy="true" aria-live="polite">
       <p className="mb-5 text-sm text-ink-2">
-        @{username} {source === 'imported' ? '가져온 데이터를 분석하는 중…' : '게시물을 Instagram API에서 불러오는 중… (게시물이 많으면 10초 이상 걸릴 수 있습니다)'}
+        @{username}{' '}
+        {source === 'imported'
+          ? '가져온 데이터를 분석하는 중…'
+          : source === 'external'
+            ? '외부 데이터 서비스가 공개 게시물을 수집하는 중… 처음 조회하는 계정은 30초~2분 걸립니다. 창을 닫지 마세요.'
+            : '게시물을 Instagram API에서 불러오는 중… (게시물이 많으면 10초 이상 걸릴 수 있습니다)'}
       </p>
       <div className="flex gap-4">
         <div className="size-20 rounded-full bg-surface-2" />
@@ -206,18 +214,52 @@ function LoadingState({ username, source }: { username: string; source: DataSour
 
 function ErrorState({
   error,
+  source,
   username,
   onRetry,
   onImport,
   onPeriodAll,
 }: {
   error: unknown
+  source: DataSourceKind
   username: string
   onRetry: () => void
   onImport: () => void
   onPeriodAll?: () => void
 }) {
-  const e = describeError(error)
+  const e = describeError(error, source)
+  const [code, setCode] = useState('')
+  if (error instanceof AnalyzerError && error.code === 'ACCESS_CODE_REQUIRED') {
+    return (
+      <form
+        className="mx-auto mt-10 max-w-sm rounded-xl border border-line bg-surface p-6"
+        onSubmit={(ev) => {
+          ev.preventDefault()
+          if (!code.trim()) return
+          setAccessCode(code.trim())
+          onRetry()
+        }}
+      >
+        <h1 className="text-lg font-semibold">{e.title}</h1>
+        <p className="mt-2 text-sm text-ink-2">{e.reason}</p>
+        <label htmlFor="access-code" className="mt-4 block text-xs text-ink-2">
+          접근 코드
+        </label>
+        <input
+          id="access-code"
+          type="password"
+          value={code}
+          onChange={(ev) => setCode(ev.target.value)}
+          autoComplete="off"
+          className="mt-1 h-10 w-full rounded-lg border border-line-strong bg-surface px-3 text-base text-ink outline-none focus:border-accent sm:text-sm"
+        />
+        <p className="mt-1 text-xs text-ink-3">이 탭을 닫으면 코드는 지워집니다.</p>
+        <Button type="submit" variant="primary" className="mt-4 w-full">
+          확인
+        </Button>
+      </form>
+    )
+  }
   return (
     <div className="mx-auto mt-10 max-w-lg rounded-xl border border-line bg-surface p-6" role="alert">
       <div className="text-xs font-medium text-ink-3">@{username}</div>

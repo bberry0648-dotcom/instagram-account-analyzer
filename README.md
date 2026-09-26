@@ -97,6 +97,16 @@ What official data **cannot** tell you (and the app therefore never claims):
 - Stories and ads are excluded.
 - Rate limits: Business Use Case limits per app-user. The server caches each response for 15 min and caps pagination (`META_MAX_PAGES`, default 12 × 50 posts).
 
+### External provider (Apify) — no Facebook needed
+
+When a Facebook-linked professional account isn't an option, the server can use a third-party collector instead. It's implemented for **Apify** (`apify/instagram-profile-scraper` + `apify/instagram-post-scraper`) in `server/providers/apify.ts`; swapping vendors means writing one adapter that returns `AccountDataset`.
+
+- Works for any **public** account (personal or professional). Private accounts are reported as such.
+- Data is collected by the vendor from public Instagram pages, not via Meta's API. Numbers can differ slightly from the app, it can break when Instagram changes, and it sits in a grey zone of Instagram's terms. The dashboard labels it "External Provider (Apify)".
+- **Cost:** about $2.3–2.7 per 1,000 results. One analysis ≈ `EXTERNAL_MAX_POSTS` (default 150) + 1 → ~$0.40. Apify's free plan includes ~$5/month (≈ 10–15 fresh analyses).
+- **Cost controls:** one 12-month collection per account, reused for every period switch; results cached `EXTERNAL_CACHE_HOURS` (default 12 h) in Workers KV; optional `ACCESS_CODE` so only people with the code can trigger runs; also set a monthly usage limit in the Apify console.
+- Preference: if Meta credentials exist the search uses Meta; otherwise it uses the external provider.
+
 ### Import fallback
 
 For accounts the API can't reach, **JSON/CSV import** works entirely in the browser; files are never uploaded.
@@ -166,7 +176,10 @@ cp .env.example .env        # fill in server secrets (never commit .env)
 | `META_IG_USER_ID` | server | yes | *Your* IG professional account id (`1784…`), the account that "discovers" others |
 | `META_GRAPH_VERSION` | server | no | default `v25.0` |
 | `META_MAX_PAGES` | server | no | pages of 50 posts per analysis, default 12 |
-| `EXTERNAL_PROVIDER_URL` / `_KEY` / `_NAME` | server | key: yes | optional third-party source (see `server/providers/external.ts`) |
+| `EXTERNAL_PROVIDER_NAME` | server | no | `apify` |
+| `EXTERNAL_PROVIDER_KEY` | server | **yes** | Apify API token |
+| `EXTERNAL_MAX_POSTS` / `EXTERNAL_CACHE_HOURS` | server | no | cost caps (150 posts, 12 h) |
+| `ACCESS_CODE` | server | **yes** | if set, searching requires this code (sent as `X-Access-Code`, kept in sessionStorage only) |
 | `ALLOWED_ORIGINS` | server | no | CORS allow-list, comma separated |
 | `VITE_API_BASE_URL` | frontend build | **no, public** | URL of the deployed API; empty = import-only mode |
 
@@ -215,12 +228,14 @@ URL: `https://bberry0648-dotcom.github.io/instagram-account-analyzer/`
 
 ```bash
 npx wrangler login
-npx wrangler secret put META_ACCESS_TOKEN
-npx wrangler secret put META_IG_USER_ID
-npm run deploy:api            # wrangler deploy → https://instagram-account-analyzer-api.<you>.workers.dev
+npx wrangler kv namespace create CACHE      # paste the id into wrangler.toml
+npx wrangler secret put EXTERNAL_PROVIDER_KEY   # Apify token
+npx wrangler secret put ACCESS_CODE             # optional but recommended
+# (Meta instead/also) npx wrangler secret put META_ACCESS_TOKEN / META_IG_USER_ID
+npm run deploy:api            # → https://instagram-account-analyzer-api.<you>.workers.dev
 ```
 
-`wrangler.toml` holds only non-secret vars (`ALLOWED_ORIGINS`, version, page cap). Responses are cached at the edge for 15 minutes. `server/handler.ts` uses only the standard `Request`/`Response` API, so a Vercel or Netlify function is a thin wrapper around `handleRequest()`.
+`wrangler.toml` holds only non-secret vars. Responses are cached in Workers KV (Meta 15 min, external 12 h). `server/handler.ts` uses only the standard `Request`/`Response` API, so a Vercel or Netlify function is a thin wrapper around `handleRequest()`.
 
 ## Security Notes
 

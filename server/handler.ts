@@ -7,14 +7,19 @@ import { ProviderError, type ServerProvider } from './providers/types'
 export interface Env extends MetaEnv, ExternalEnv {
   /** Comma-separated list of allowed browser origins. */
   ALLOWED_ORIGINS?: string
+  /** If set, /api/account requires header X-Access-Code with this value (protects paid API credits). */
+  ACCESS_CODE?: string
+  /** Cache lifetime for external-provider results (hours). Each fresh fetch costs money. */
+  EXTERNAL_CACHE_HOURS?: string
 }
 
 export interface ResponseCache {
   get(key: string): Promise<Response | undefined>
-  put(key: string, res: Response): Promise<void>
+  /** `ttlSeconds` comes from the response's Cache-Control max-age. */
+  put(key: string, res: Response, ttlSeconds: number): Promise<void>
 }
 
-const CACHE_TTL_SECONDS = 15 * 60
+const META_CACHE_SECONDS = 15 * 60
 
 /**
  * Runtime-agnostic request handler (Cloudflare Worker, Node dev server).
@@ -38,6 +43,7 @@ export async function handleRequest(req: Request, env: Env, cache?: ResponseCach
     return json(
       {
         ok: true,
+        accessCodeRequired: Boolean(env.ACCESS_CODE),
         providers: Object.fromEntries(Object.entries(providers).map(([k, p]) => [k, p.isConfigured()])),
       },
       200,
@@ -46,6 +52,10 @@ export async function handleRequest(req: Request, env: Env, cache?: ResponseCach
   }
 
   if (url.pathname !== '/api/account') return json({ error: { code: 'INVALID_INPUT' } }, 404, cors)
+
+  if (env.ACCESS_CODE && !safeEqual(req.headers.get('X-Access-Code') ?? '', env.ACCESS_CODE)) {
+    return json({ error: { code: 'ACCESS_CODE_REQUIRED' } } satisfies ApiErrorBody, 401, cors)
+  }
 
   const username = (url.searchParams.get('username') ?? '').toLowerCase()
   if (!isValidUsername(username)) {
@@ -56,20 +66,32 @@ export async function handleRequest(req: Request, env: Env, cache?: ResponseCach
   if (!provider) return json({ error: { code: 'INVALID_INPUT', detail: 'provider' } }, 400, cors)
 
   const sinceRaw = url.searchParams.get('since')
-  const since = sinceRaw ? new Date(sinceRaw) : null
+  let since = sinceRaw ? new Date(sinceRaw) : null
   if (since && Number.isNaN(since.getTime())) {
     return json({ error: { code: 'INVALID_INPUT', detail: 'since' } }, 400, cors)
   }
+  // Paid external data: fetch one 12-month window per account and let the client filter periods,
+  // so switching 1/3/6/12 months never triggers another paid run.
+  if (providerId === 'external') {
+    since = new Date()
+    since.setUTCMonth(since.getUTCMonth() - 12)
+  }
 
-  // Cache per account/provider/day-granular period to protect the Meta rate limit.
-  const cacheKey = `https://cache.local/${providerId}/${username}/${since ? since.toISOString().slice(0, 10) : 'all'}`
+  const cacheKey =
+    providerId === 'external'
+      ? `https://cache.local/external/${username}`
+      : `https://cache.local/${providerId}/${username}/${since ? since.toISOString().slice(0, 10) : 'all'}`
   const cached = await cache?.get(cacheKey)
   if (cached) return withHeaders(cached, { ...cors, 'X-Cache': 'HIT' })
 
   try {
     const dataset = await provider.fetchAccount(username, { since })
-    const res = json(dataset, 200, { 'Cache-Control': `public, max-age=${CACHE_TTL_SECONDS}` })
-    await cache?.put(cacheKey, res.clone())
+    const ttl =
+      providerId === 'external'
+        ? Math.max(1, Number.parseFloat(env.EXTERNAL_CACHE_HOURS ?? '') || 12) * 3600
+        : META_CACHE_SECONDS
+    const res = json(dataset, 200, { 'Cache-Control': `public, max-age=${Math.round(ttl)}` })
+    await cache?.put(cacheKey, res.clone(), Math.round(ttl))
     return withHeaders(res, { ...cors, 'X-Cache': 'MISS' })
   } catch (err) {
     if (err instanceof ProviderError) {
@@ -90,7 +112,7 @@ function corsHeaders(req: Request, env: Env): Record<string, string> {
     .filter(Boolean)
   const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Access-Code',
     Vary: 'Origin',
   }
   if (allowed.includes(origin)) headers['Access-Control-Allow-Origin'] = origin
@@ -108,4 +130,11 @@ function withHeaders(res: Response, headers: Record<string, string>): Response {
   const out = new Response(res.body, res)
   for (const [k, v] of Object.entries(headers)) out.headers.set(k, v)
   return out
+}
+
+/** Length-independent comparison so the access code can't be guessed by timing. */
+function safeEqual(a: string, b: string): boolean {
+  let diff = a.length ^ b.length
+  for (let i = 0; i < Math.max(a.length, b.length); i++) diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0)
+  return diff === 0
 }
