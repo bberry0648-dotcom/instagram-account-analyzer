@@ -13,7 +13,7 @@ export default function App() {
   const { path, query } = useRoute()
   if (path[0] === 'a' && SOURCES.includes(path[1] as DataSourceKind) && path[2] && isValidUsername(path[2])) {
     return (
-      <Suspense fallback={null}>
+      <Suspense fallback={<p className="p-6 text-sm text-ink-3">불러오는 중…</p>}>
         <DashboardPage
         key={`${path[1]}:${path[2]}`}
         source={path[1] as DataSourceKind}
